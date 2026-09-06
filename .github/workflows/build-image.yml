@@ -45,7 +45,7 @@ jobs:
     if: github.server_url != 'https://github.com'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify exact source SHA
         env:
@@ -230,7 +230,7 @@ jobs:
 
       - name: Upload artifact
         if: steps.gate.outputs.build == 'true'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
         with:
           name: ${{ matrix.profile }}-${{ github.event.inputs.source_sha }}-${{ steps.image.outputs.name }}
           retention-days: 30

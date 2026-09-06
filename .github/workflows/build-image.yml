@@ -1,14 +1,21 @@
 name: Build Image
 
 on:
-  release:
-    types: [published]  # 发布新版本时编译全部三块板
-  workflow_dispatch:     # 手动触发（Actions 页 "Run workflow" 按钮）
+  workflow_dispatch:
     inputs:
+      source_sha:
+        description: "必须与 checkout 后的 commit SHA 一致"
+        required: true
+        type: string
+      build_ref:
+        description: "一次性 ci/build/<run>-<sha> 引用"
+        required: true
+        type: string
       board:
-        description: "手动构建的板子（release 触发时忽略此项，仍编全部三块）"
+        description: "要构建的板子"
         type: choice
-        default: nanopi-zero2
+        required: true
+        default: all
         options:
           - nanopi-zero2
           - nanopi-r3s
@@ -23,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         profile: [nanopi-zero2, nanopi-r3s, orangepi4-lts]
-    # release 触发 → 三块全编；手动触发 → 只编选中的那块（选 all 则三块）。
+    # all → 三块全编；单板 → 只编选中的那块。
     # 用静态 matrix（不用 fromJSON 动态 matrix——Gitea act_runner 对
     # fromJSON(needs.*.outputs.*) 有 bug：matrix 维度生成了但 matrix.profile 绑成
     # 空值，build.sh 收到空 profile 报错，run #8 已踩过并回退）。
@@ -34,23 +41,28 @@ jobs:
     # 故 job 级 if 只放「平台门控」（不含 matrix，两边都合法），板子选择下沉到下面的
     # gate step（step 级表达式里 matrix 可用）。
     #
-    # 平台门控（github.server_url != github.com → 仅 Gitea 跑）：本仓库 Gitea 为主、
-    # push-mirror 到 GitHub，两边同一份文件。镜像构建依赖自托管 `develop` runner +
-    # Gitea 旧版 artifact API，GitHub 上既无该 runner 也跑不了。门控后 GitHub 上整个
-    # job skipped，红叉消失；Gitea 行为不变。
+    # 构建只在 Gitea 执行；GitHub 只负责投递精确 SHA。
     if: github.server_url != 'https://github.com'
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify exact source SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "${actual_sha}" = "${EXPECTED_SHA}"
+          echo "building source ${actual_sha}"
+
       # ── 板子选择 gate（替代 job 级 if 里的 matrix 判据，见上方说明）──────────
-      # release 或 dispatch+all → 全编；dispatch+单块 → 只有选中那块 build=true。
+      # all → 全编；单板 → 只有选中那块 build=true。
       # 非选中的 matrix 分支：build=false，后续实质 step 全部 if 跳过（job 秒过）。
       - name: Gate — 本 profile 是否需要构建
         id: gate
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
-             && [ "${{ github.event.inputs.board }}" != "all" ] \
+          if [ "${{ github.event.inputs.board }}" != "all" ] \
              && [ "${{ github.event.inputs.board }}" != "${{ matrix.profile }}" ]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
             echo "⏭ ${{ matrix.profile }} 非本次手动选中（board=${{ github.event.inputs.board }}），跳过"
@@ -201,23 +213,30 @@ jobs:
           echo "path=${path}"        >> $GITHUB_OUTPUT
           echo "name=$(basename "$path")" >> $GITHUB_OUTPUT
 
-      # ── workflow_dispatch 手动触发：上传为 Artifact ──────────────────────
-      # Gitea Actions 自报为 GHES，upload-artifact@v4 走新 artifact API（GHES/Gitea 不支持，
-      # 报 "v2.0.0+ ... not currently supported on GHES" 而失败）。Gitea 实现的是旧版
-      # artifact API，必须用 @v3。GitHub 上 v3 同样可用。
+      # ── 上传为 Gitea Artifact ────────────────────────────────────────────
+      # Gitea 实现的是旧版 artifact API，必须用 @v3；镜像不上传 GitHub。
+      - name: Generate checksum and manifest
+        if: steps.gate.outputs.build == 'true'
+        env:
+          SOURCE_SHA: ${{ github.event.inputs.source_sha }}
+          BUILD_REF: ${{ github.event.inputs.build_ref }}
+          BOARD: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          image_path="${{ steps.image.outputs.path }}"
+          sha256sum "${image_path}" > "${image_path}.sha256"
+          printf '{"source_sha":"%s","build_ref":"%s","board":"%s","image":"%s"}\n' \
+            "${SOURCE_SHA}" "${BUILD_REF}" "${BOARD}" "$(basename "${image_path}")" > manifest.json
+
       - name: Upload artifact
-        if: steps.gate.outputs.build == 'true' && github.event_name == 'workflow_dispatch'
+        if: steps.gate.outputs.build == 'true'
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.profile }}-${{ steps.image.outputs.name }}
-          path: ${{ steps.image.outputs.path }}
-
-      # ── release 触发：附加到对应的 GitHub Release ────────────────────────
-      - name: Upload to release
-        if: steps.gate.outputs.build == 'true' && github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ steps.image.outputs.path }}
+          name: ${{ matrix.profile }}-${{ github.event.inputs.source_sha }}-${{ steps.image.outputs.name }}
+          path: |
+            ${{ steps.image.outputs.path }}
+            ${{ steps.image.outputs.path }}.sha256
+            manifest.json
 
       # ── 收尾：把工作目录交还 dev，让 act_runner 能清理回收 ────────────────
       # Armbian 用 sudo 构建，留下大量 root 拥有的文件；act_runner 以 dev 用户

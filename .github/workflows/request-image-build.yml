@@ -1,0 +1,111 @@
+name: Request Image Build on Gitea
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: "要构建的板子"
+        type: choice
+        required: true
+        default: all
+        options:
+          - nanopi-zero2
+          - nanopi-r3s
+          - orangepi4-lts
+          - all
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: request-image-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate build source
+        id: source
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          short_sha="${source_sha:0:7}"
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            board=all
+            release_tag="${RELEASE_TAG}"
+          else
+            board="${{ github.event.inputs.board }}"
+            release_tag=""
+          fi
+          test -n "${board}"
+          build_ref="ci/build/${GITHUB_RUN_ID}-${short_sha}"
+          {
+            echo "source_sha=${source_sha}"
+            echo "build_ref=${build_ref}"
+            echo "board=${board}"
+            echo "release_tag=${release_tag}"
+          } >> "$GITHUB_OUTPUT"
+          echo "source SHA: ${source_sha}"
+          echo "Gitea build ref: ${build_ref}"
+          echo "board: ${board}"
+
+      - name: Push immutable build ref to Gitea
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          BUILD_REF: ${{ steps.source.outputs.build_ref }}
+        run: |
+          set -euo pipefail
+          test -n "${GITEA_TOKEN}"
+          askpass="${RUNNER_TEMP}/gitea-askpass"
+          trap 'rm -f "${askpass}"' EXIT
+          cat > "${askpass}" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' 'SakuraPuare' ;;
+            *Password*) printf '%s\n' "${GITEA_TOKEN}" ;;
+            *) exit 1 ;;
+          esac
+          ASKPASS
+          chmod 700 "${askpass}"
+          export GIT_ASKPASS="${askpass}"
+          export GIT_TERMINAL_PROMPT=0
+          git remote add gitea https://gitea.sakurapuare.com/SakuraPuare/Hive.git
+          git push gitea "HEAD:refs/heads/${BUILD_REF}"
+
+      - name: Dispatch local Gitea build
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          BUILD_REF: ${{ steps.source.outputs.build_ref }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          BOARD: ${{ steps.source.outputs.board }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          payload="$(jq -n \
+            --arg ref "${BUILD_REF}" \
+            --arg source_sha "${SOURCE_SHA}" \
+            --arg build_ref "${BUILD_REF}" \
+            --arg board "${BOARD}" \
+            --arg release_tag "${RELEASE_TAG}" \
+            '{ref:$ref, inputs:{source_sha:$source_sha, build_ref:$build_ref, board:$board, release_tag:$release_tag}}')"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url 'https://gitea.sakurapuare.com/api/v1/repos/SakuraPuare/Hive/actions/workflows/build-image.yml/dispatches?return_run_details=true' \
+            --header 'Accept: application/json' \
+            --header 'Content-Type: application/json' \
+            --header "Authorization: token ${GITEA_TOKEN}" \
+            --data "${payload}"

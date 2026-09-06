@@ -1,0 +1,61 @@
+name: Cleanup Gitea Build Refs
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    env:
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+    steps:
+      - name: Delete expired one-shot build refs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          base = "https://gitea.sakurapuare.com/api/v1/repos/SakuraPuare/Hive"
+          token = os.environ["GITEA_TOKEN"]
+          cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=14)
+          headers = {"Authorization": f"token {token}", "Accept": "application/json"}
+          page = 1
+          deleted = 0
+          while True:
+              query = urllib.parse.urlencode({"limit": 50, "page": page})
+              req = urllib.request.Request(f"{base}/branches?{query}", headers=headers)
+              with urllib.request.urlopen(req) as response:
+                  branches = json.load(response)
+              if not branches:
+                  break
+              for branch in branches:
+                  name = branch.get("name", "")
+                  if not name.startswith("ci/build/"):
+                      continue
+                  timestamp = branch.get("commit", {}).get("timestamp")
+                  if not timestamp:
+                      continue
+                  created = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                  if created >= cutoff:
+                      continue
+                  encoded = urllib.parse.quote(name, safe="")
+                  delete = urllib.request.Request(
+                      f"{base}/branches/{encoded}", headers=headers, method="DELETE"
+                  )
+                  with urllib.request.urlopen(delete):
+                      pass
+                  print(f"deleted {name} ({created.isoformat()})")
+                  deleted += 1
+              page += 1
+          print(f"deleted={deleted}")
+          PY

@@ -30,7 +30,7 @@ jobs:
           cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=14)
           headers = {"Authorization": f"token {token}", "Accept": "application/json"}
           page = 1
-          deleted = 0
+          candidates = []
           while True:
               query = urllib.parse.urlencode({"limit": 50, "page": page})
               req = urllib.request.Request(f"{base}/branches?{query}", headers=headers)
@@ -38,24 +38,27 @@ jobs:
                   branches = json.load(response)
               if not branches:
                   break
-              for branch in branches:
-                  name = branch.get("name", "")
-                  if not name.startswith("ci/build/"):
-                      continue
-                  timestamp = branch.get("commit", {}).get("timestamp")
-                  if not timestamp:
-                      continue
-                  created = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-                  if created >= cutoff:
-                      continue
-                  encoded = urllib.parse.quote(name, safe="")
-                  delete = urllib.request.Request(
-                      f"{base}/branches/{encoded}", headers=headers, method="DELETE"
-                  )
-                  with urllib.request.urlopen(delete):
-                      pass
-                  print(f"deleted {name} ({created.isoformat()})")
-                  deleted += 1
+              candidates.extend(branches)
               page += 1
+
+          deleted = 0
+          for branch in candidates:
+              name = branch.get("name", "")
+              if not name.startswith("ci/build/"):
+                  continue
+              timestamp = branch.get("commit", {}).get("timestamp")
+              if not timestamp:
+                  continue
+              created = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+              if created >= cutoff:
+                  continue
+              encoded = urllib.parse.quote(name, safe="")
+              delete = urllib.request.Request(
+                  f"{base}/branches/{encoded}", headers=headers, method="DELETE"
+              )
+              with urllib.request.urlopen(delete):
+                  pass
+              print(f"deleted {name} ({created.isoformat()})")
+              deleted += 1
           print(f"deleted={deleted}")
           PY

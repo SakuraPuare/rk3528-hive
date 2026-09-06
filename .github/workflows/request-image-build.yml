@@ -26,8 +26,9 @@ concurrency:
 jobs:
   request:
     if: >-
-      github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      github.server_url == 'https://github.com' &&
+      (github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact source commit

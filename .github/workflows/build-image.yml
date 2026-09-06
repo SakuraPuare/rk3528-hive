@@ -233,6 +233,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.profile }}-${{ github.event.inputs.source_sha }}-${{ steps.image.outputs.name }}
+          retention-days: 30
           path: |
             ${{ steps.image.outputs.path }}
             ${{ steps.image.outputs.path }}.sha256

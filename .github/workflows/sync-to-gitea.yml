@@ -1,0 +1,57 @@
+name: Sync to Gitea
+
+on:
+  push:
+    branches:
+      - main
+      - deploy/k8s
+    tags:
+      - "*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-to-gitea-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # The same workflow file exists on Gitea; never let it push Gitea to itself.
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Update canonical refs on Gitea
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${GITEA_TOKEN}"
+
+          credential_file="${RUNNER_TEMP}/gitea-credentials"
+          trap 'rm -f "${credential_file}"' EXIT
+          printf 'https://SakuraPuare:%s@gitea.sakurapuare.com\n' "${GITEA_TOKEN}" > "${credential_file}"
+          chmod 600 "${credential_file}"
+
+          git config --local credential.helper "store --file=${credential_file}"
+          git remote add gitea https://gitea.sakurapuare.com/SakuraPuare/Hive.git
+
+          if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            remote_ref="refs/remotes/gitea/${GITHUB_REF_NAME}"
+            git fetch gitea "+refs/heads/${GITHUB_REF_NAME}:${remote_ref}"
+            expected_sha="$(git rev-parse "${remote_ref}")"
+            git push \
+              --force-with-lease="refs/heads/${GITHUB_REF_NAME}:${expected_sha}" \
+              gitea \
+              "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
+
+          git fetch gitea '+refs/tags/*:refs/tags/*'
+          git push gitea 'refs/tags/*:refs/tags/*'

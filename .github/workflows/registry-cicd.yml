@@ -56,7 +56,7 @@ jobs:
         run: make openapi
 
       - name: Upload openapi.yaml
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: registry-openapi-${{ github.sha }}
           path: management/registry/openapi/openapi.yaml
@@ -85,7 +85,7 @@ jobs:
           cache-dependency-path: management/registry-ui/package-lock.json
 
       - name: Download openapi.yaml
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: registry-openapi-${{ github.sha }}
           path: management/registry/openapi
@@ -113,7 +113,7 @@ jobs:
         run: npm run build
 
       - name: Upload registry-ui out (frontend artifact)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: registry-ui-out-${{ github.sha }}-node${{ matrix.node-version }}
           path: management/registry-ui/out
@@ -144,7 +144,7 @@ jobs:
         run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o hive-registry-arm64 .
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: hive-registry-${{ github.sha }}
           path: |
